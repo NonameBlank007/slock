@@ -21,6 +21,8 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
+#include <X11/Xft/Xft.h>
+#include <fontconfig/fontconfig.h>
 
 #include "arg.h"
 #include "util.h"
@@ -92,56 +94,72 @@ dontkillme(void)
 static void
 writemessage(Display *dpy, Window win, int screen)
 {
-	int len, line_len, width, height, s_width, s_height, i, j, k, tab_replace, tab_size;
-	XGCValues gr_values;
-	XFontStruct *fontinfo;
-	XColor color, dummy;
-	XineramaScreenInfo *xsi;
-	GC gc;
-	fontinfo = XLoadQueryFont(dpy, font_name);
+	int len, line_len, line_start, width, height, s_width, s_height, i, j, k, tab_replace, tab_size;
+	XineramaScreenInfo *xsi = NULL;
+	XftFont *font = NULL;
+	XftDraw *draw;
+	XftColor color;
+	Visual *vis;
+	Colormap cmap;
+	XGlyphInfo ext;
+	char font_pattern[256];
 
-	if (fontinfo == NULL) {
+	snprintf(font_pattern, sizeof(font_pattern), "%s:size=%f:antialias=true:autohint=true",
+	         font_name, font_size);
+
+	font = XftFontOpenName(dpy, screen, font_pattern);
+	if (!font)
+		font = XftFontOpenName(dpy, screen, "monospace:size=12");
+
+	if (!font) {
 		if (count_error == 0) {
-			fprintf(stderr, "slock: Unable to load font \"%s\"\n", font_name);
+			fprintf(stderr, "slock: Unable to load font \"%s\"\n", font_pattern);
 			fprintf(stderr, "slock: Try listing fonts with 'slock -f'\n");
 			count_error++;
 		}
 		return;
 	}
 
-	tab_size = 8 * XTextWidth(fontinfo, " ", 1);
+	vis = DefaultVisual(dpy, screen);
+	cmap = DefaultColormap(dpy, screen);
 
-	XAllocNamedColor(dpy, DefaultColormap(dpy, screen),
-		 text_color, &color, &dummy);
+	if (!XftColorAllocName(dpy, vis, cmap, text_color, &color)) {
+		fprintf(stderr, "slock: Unable to allocate color \"%s\"\n", text_color);
+		XftFontClose(dpy, font);
+		return;
+	}
 
-	gr_values.font = fontinfo->fid;
-	gr_values.foreground = color.pixel;
-	gc=XCreateGC(dpy,win,GCFont+GCForeground, &gr_values);
+	draw = XftDrawCreate(dpy, win, vis, cmap);
+	if (!draw) {
+		XftColorFree(dpy, vis, cmap, &color);
+		XftFontClose(dpy, font);
+		return;
+	}
 
-	/*  To prevent "Uninitialized" warnings. */
-	xsi = NULL;
-
-	/*
-	 * Start formatting and drawing text
-	 */
+	XftTextExtentsUtf8(dpy, font, (FcChar8 *)" ", 1, &ext);
+	tab_size = 8 * (ext.xOff > 0 ? ext.xOff : 8);
 
 	len = strlen(message);
 
 	/* Max max line length (cut at '\n') */
 	line_len = 0;
+	line_start = 0;
 	k = 0;
 	for (i = j = 0; i < len; i++) {
 		if (message[i] == '\n') {
-			if (i - j > line_len)
+			if (i - j > line_len) {
 				line_len = i - j;
+				line_start = j;
+			}
 			k++;
 			i++;
 			j = i;
 		}
 	}
-	/* If there is only one line */
-	if (line_len == 0)
+	if (line_len == 0) {
 		line_len = len;
+		line_start = 0;
+	}
 
 	if (XineramaIsActive(dpy)) {
 		xsi = XineramaQueryScreens(dpy, &i);
@@ -152,8 +170,10 @@ writemessage(Display *dpy, Window win, int screen)
 		s_height = DisplayHeight(dpy, screen);
 	}
 
-	height = s_height*3/7 - (k*20)/3;
-	width  = (s_width - XTextWidth(fontinfo, message, line_len))/2;
+	XftTextExtentsUtf8(dpy, font, (FcChar8 *)(message + line_start), line_len, &ext);
+	int line_spacing = font->ascent + font->descent + 6;
+	height = s_height * 3 / 7 - (k * line_spacing) / 3;
+	width  = (s_width - ext.xOff) / 2;
 
 	/* Look for '\n' and print the text between them. */
 	for (i = j = k = 0; i <= len; i++) {
@@ -165,7 +185,11 @@ writemessage(Display *dpy, Window win, int screen)
 				j++;
 			}
 
-			XDrawString(dpy, win, gc, width + tab_size*tab_replace, height + 20*k, message + j, i - j);
+			XftDrawStringUtf8(draw, &color, font,
+			                  width + tab_size * tab_replace,
+			                  height + (k * line_spacing) + font->ascent,
+			                  (FcChar8 *)(message + j), i - j);
+
 			while (i < len && message[i] == '\n') {
 				i++;
 				j = i;
@@ -177,6 +201,10 @@ writemessage(Display *dpy, Window win, int screen)
 	/* xsi should not be NULL anyway if Xinerama is active, but to be safe */
 	if (XineramaIsActive(dpy) && xsi != NULL)
 			XFree(xsi);
+
+	XftDrawDestroy(draw);
+	XftColorFree(dpy, vis, cmap, &color);
+	XftFontClose(dpy, font);
 }
 
 
@@ -419,8 +447,9 @@ main(int argc, char **argv) {
 	const char *hash;
 	Display *dpy;
 	int i, s, nlocks, nscreens;
-	int count_fonts;
-	char **font_names;
+	FcFontSet *fs;
+	FcPattern *pat;
+	FcObjectSet *os;
 
 	ARGBEGIN {
 	case 'v':
@@ -430,11 +459,15 @@ main(int argc, char **argv) {
 		message = EARGF(usage());
 		break;
 	case 'f':
-		if (!(dpy = XOpenDisplay(NULL)))
-			die("slock: cannot open display\n");
-		font_names = XListFonts(dpy, "*", 10000 /* list 10000 fonts*/, &count_fonts);
-		for (i=0; i<count_fonts; i++) {
-			fprintf(stderr, "%s\n", *(font_names+i));
+		if (!FcInit())
+			die("slock: Fontconfig initialization failed\n");
+		pat = FcPatternCreate();
+		os = FcObjectSetBuild(FC_FAMILY, NULL);
+		fs = FcFontList(NULL, pat, os);
+		for (i = 0; fs && i < fs->nfont; i++) {
+			FcChar8 *fam;
+			if (FcPatternGetString(fs->fonts[i], FC_FAMILY, 0, &fam) == FcResultMatch)
+				printf("%s\n", fam);
 		}
 		return 0;
 	default:
@@ -461,6 +494,10 @@ main(int argc, char **argv) {
 	errno = 0;
 	if (!crypt("", hash))
 		die("slock: crypt: %s\n", strerror(errno));
+
+	/* Initialize Fontconfig cache BEFORE dropping privileges */
+	if (!FcInit())
+		die("slock: Fontconfig initialization failed\n");
 
 	if (!(dpy = XOpenDisplay(NULL)))
 		die("slock: cannot open display\n");

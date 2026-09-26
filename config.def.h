@@ -20,5 +20,8 @@ static const char * message = "Enter password to unlock";
 /* text color */
 static const char * text_color = "#abb2bf";
 
-/* text size (must be a valid size) */
-static const char * font_name = "fixed";
+/* font name (slock -f/fc-list) */
+static const char * font_name = "Isoveka";
+
+/* font size (must be a valid size) */
+static const double font_size = 18.0;
