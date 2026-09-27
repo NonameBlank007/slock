@@ -24,7 +24,7 @@ native:
 	$(MAKE) OPTIMISATIONS="${NATIVE_OPTIMISATIONS}" all
 
 clean:
-	rm -f slock ${OBJ} slock-${VERSION}.tar.gz
+	rm -f slock ${OBJ} slock-${VERSION}.tar.gz *.rej *.orig
 
 dist: clean
 	mkdir -p slock-${VERSION}
