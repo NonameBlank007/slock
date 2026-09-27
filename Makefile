@@ -9,7 +9,7 @@ OBJ = ${SRC:.c=.o}
 all: slock
 
 .c.o:
-	${CC} -c ${CFLAGS} $<
+	${CC} -c ${CFLAGS} ${CFLAGS} $<
 
 ${OBJ}: config.h config.mk arg.h util.h
 
@@ -17,7 +17,11 @@ config.h:
 	cp config.def.h $@
 
 slock: ${OBJ}
-	${CC} -o $@ ${OBJ} ${LDFLAGS}
+	${CC} -o $@ ${OBJ} ${CFLAGS} ${LDFLAGS}
+
+native:
+	$(MAKE) clean
+	$(MAKE) OPTIMISATIONS="${NATIVE_OPTIMISATIONS}" all
 
 clean:
 	rm -f slock ${OBJ} slock-${VERSION}.tar.gz
@@ -43,4 +47,4 @@ uninstall:
 	rm -f ${DESTDIR}${PREFIX}/bin/slock
 	rm -f ${DESTDIR}${MANPREFIX}/man1/slock.1
 
-.PHONY: all clean dist install uninstall
+.PHONY: all clean dist install native uninstall

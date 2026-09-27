@@ -18,10 +18,14 @@ FREETYPEINC = /usr/include/freetype2
 INCS = -I. -I/usr/include -I${X11INC} -I${FREETYPEINC}
 LIBS = -L/usr/lib -lc -lcrypt -L${X11LIB} ${FREETYPELIBS} -lX11 -lXext -lXrandr -lXinerama
 
+# optimisation options
+OPTIMISATIONS ?= -O2
+NATIVE_OPTIMISATIONS ?= -O3 -march=native -mtune=native -flto=auto
+
 # flags
-CPPFLAGS = -DVERSION=\"${VERSION}\" -D_DEFAULT_SOURCE -DHAVE_SHADOW_H
-CFLAGS = -std=c99 -pedantic -Wall -Os ${INCS} ${CPPFLAGS}
-LDFLAGS = -s ${LIBS}
+CPPFLAGS += -DVERSION=\"${VERSION}\" -D_DEFAULT_SOURCE -DHAVE_SHADOW_H
+CFLAGS ?= -std=c99 -pedantic -Wall ${OPTIMISATIONS} ${INCS} ${CPPFLAGS}
+LDFLAGS ?= -s ${LIBS}
 COMPATSRC = explicit_bzero.c
 
 # On OpenBSD and Darwin remove -lcrypt from LIBS
